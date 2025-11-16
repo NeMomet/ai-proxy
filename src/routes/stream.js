@@ -13,9 +13,14 @@ export default async function registerStreamRoute(fastify) {
             headers: {
                 type: "object",
                 properties: {
-                    "x-api-key": { type: "string" }
+                    "x-api-key": { type: "string" },
+                    "accept": {
+                        type: "string",
+                        const: "application/x-ndjson",
+                        description: "Must be application/x-ndjson"
+                    }
                 },
-                required: ["x-api-key"]
+                required: ["x-api-key", "accept"]
             },
             body: {
                 type: "object",
@@ -26,9 +31,27 @@ export default async function registerStreamRoute(fastify) {
                 additionalProperties: false
             },
             response: {
-                200: { type: "string" },
+                200: {
+                    content: {
+                        "application/x-ndjson": {
+                            schema: {
+                                type: "string",
+                                description: "NDJSON stream. Each line is a JSON event object."
+                            }
+                        }
+                    }
+                },
                 401: { type: "object", properties: { error: { type: "string" } }, required: ["error"] },
                 403: { type: "object", properties: { error: { type: "string" } }, required: ["error"] },
+                406: {
+                    type: "object",
+                    properties: {
+                        error: { type: "string" },
+                        message: { type: "string" },
+                        accept: { type: "string" }
+                    },
+                    required: ["error"]
+                },
                 429: {
                     type: "object",
                     properties: {
@@ -62,9 +85,74 @@ export default async function registerStreamRoute(fastify) {
 
         await addUsage(apiKey, 1);
 
-        // Stream full UI message stream (SSE) directly to Node.js response
-        reply.hijack();
-        result.pipeUIMessageStreamToResponse(reply.raw);
+        const accept = String(req.headers["accept"] || "");
+        if (!accept.includes("application/x-ndjson")) {
+            return reply.status(406).send({
+                error: "Not Acceptable",
+                message: "This endpoint only supports application/x-ndjson",
+                accept: "application/x-ndjson"
+            });
+        }
+        reply.raw.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
+        reply.raw.setHeader("Connection", "keep-alive");
+        reply.raw.setHeader("X-Accel-Buffering", "no");
+        if (typeof reply.raw.flushHeaders === "function") {
+            reply.raw.flushHeaders();
+        }
+
+        const send = (event) => {
+            reply.raw.write(`${JSON.stringify(event)}\n`);
+        };
+
+        for await (const part of result.fullStream) {
+
+            switch (part.type) {
+                case 'start': {
+                    send({ type: "start" });
+                    break;
+                }
+                case 'text-start': {
+                    send({ type: "text-start" });
+                    break;
+                }
+                case 'text-delta': {
+                    if (typeof part.text === "string" && part.text.length > 0) {
+                        send({ type: "text-delta", delta: part.text });
+                    }
+                    break;
+                }
+                case 'text-end': {
+                    send({ type: "text-end" });
+                    break;
+                }
+                case 'reasoning-start': {
+                    send({ type: "reasoning-start" });
+                    break;
+                }
+                case 'reasoning-delta': {
+                    if (typeof part.text === "string" && part.text.length > 0) {
+                        send({ type: "reasoning-delta", delta: part.text });
+                    }
+                    break;
+                }
+                case 'reasoning-end': {
+                    send({ type: "reasoning-end" });
+                    break;
+                }
+                case 'finish': {
+                    send({ type: "finish" });
+                    break;
+                }
+                case 'error': {
+                    send({ type: "error", message: part.error?.message ?? "Unknown error" });
+                    break;
+                }
+            }
+        }
+        if (!reply.raw.writableEnded) {
+            reply.raw.end();
+        }
         return;
     });
 }

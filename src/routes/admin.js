@@ -10,19 +10,19 @@ export default async function registerAdminRoutes(fastify) {
             return reply.status(401).send({ error: "Unauthorized" });
         }
 
-        const { userId, dailyLimit } = req.body;
+        const { userId, limit } = req.body;
 
         if (!userId) {
             return reply.status(400).send({ error: "userId is required" });
         }
 
-        const apiKey = await createUser(userId, dailyLimit ?? 100);
+        const apiKey = await createUser(userId, limit ?? 100);
 
         return reply.send({
             success: true,
             userId,
             apiKey,
-            dailyLimit: dailyLimit ?? 100
+            limit: limit ?? 100
         });
     });
 }
