@@ -39,13 +39,7 @@ app.register(registerAdminRoutes);
 
 
 app.get("/", {
-    schema: {
-        tags: ["root"],
-        summary: "Health check",
-        response: {
-            200: { type: "string" }
-        }
-    }
+    schema: { hide: true }
 }, (req, reply) => {
     return reply.send("Hello World");
 });
